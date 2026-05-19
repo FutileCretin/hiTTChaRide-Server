@@ -1,0 +1,21 @@
+{
+  "name": "hittcharide-cloud-service",
+  "version": "1.0.0",
+  "description": "24/7 TTC bus detection service for hiTTChaRide",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
