@@ -290,14 +290,14 @@ cron.schedule('*/2 * * * *', async () => {
   }
 });
 
-// 10-minute FULL cleanup (safety check for map buses)
-cron.schedule('*/10 * * * *', async () => {
+// 5-minute FULL cleanup (safety check for map buses)
+cron.schedule('*/5 * * * *', async () => {
   if (isSystemSleeping()) {
-    console.log('😴 Skipping 10-min cleanup - system sleeping');
+    console.log('😴 Skipping 5-min cleanup - system sleeping');
     return;
   }
   
-  console.log('🔥 Running 10-minute FULL cleanup check...');
+  console.log('🔥 Running 5-minute FULL cleanup check...');
   const busVehicles = await fetchTTCVehicles();
   const currentVehicleIds = busVehicles.map(v => v.id);
   
