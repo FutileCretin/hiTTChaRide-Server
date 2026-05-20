@@ -336,4 +336,4 @@ app.listen(PORT, () => {
   console.log(`✅ hiTTChaRide Cloud Service running on port ${PORT}`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
   console.log(`📱 Bus data: http://localhost:${PORT}/current-buses`);
-});
+});// Force redeploy after Railway outage
