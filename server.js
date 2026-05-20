@@ -15,6 +15,26 @@ let pendingVehicles = [];        // Stage 1: 4-minute initial pending
 let confirmationVehicles = [];   // Stage 2: 2-minute confirmation pending  
 let outOfServiceVehicles = [];
 
+// Sleep mode configuration (Toronto Eastern Time)
+function isSystemSleeping() {
+  const now = new Date();
+  const torontoTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Toronto"}));
+  const hour = torontoTime.getHours();
+  const minute = torontoTime.getMinutes();
+  
+  // Sleep from 10:30 PM to 3:08 AM (22:30 to 03:08)
+  const sleepStart = 22.5; // 10:30 PM
+  const sleepEnd = 3.13;   // 3:08 AM
+  const currentTime = hour + (minute / 60);
+  
+  // Handle overnight sleep period
+  if (sleepStart > sleepEnd) {
+    return currentTime >= sleepStart || currentTime < sleepEnd;
+  } else {
+    return currentTime >= sleepStart && currentTime < sleepEnd;
+  }
+}
+
 // Interface definitions (matching your app)
 class Vehicle {
   constructor(id, routeTag, lat, lon, heading, speedKmHr) {
@@ -165,7 +185,7 @@ async function processBusDetection() {
     new OutOfServiceVehicle(
       vehicle,
       vehicle.disappearedAt,
-      new Date(now.getTime() + 25 * 60 * 1000), // 25 minutes from now
+      new Date(now.getTime() + 30 * 60 * 1000), // 30 minutes from now
       vehicle.lat,
       vehicle.lon
     )
@@ -192,7 +212,21 @@ async function processBusDetection() {
 // API endpoint for your app
 app.get('/current-buses', (req, res) => {
   console.log('📱 App requested current buses');
+  
+  // Check if system is sleeping
+  if (isSystemSleeping()) {
+    console.log('😴 System sleeping - returning sleep status');
+    res.json({
+      sleeping: true,
+      message: "4000 sorry...not in service till 3:08am",
+      resumeTime: "3:08am",
+      timestamp: new Date().toISOString()
+    });
+    return;
+  }
+  
   res.json({
+    sleeping: false,
     timestamp: new Date().toISOString(),
     count: outOfServiceVehicles.length,
     buses: outOfServiceVehicles
@@ -201,8 +235,11 @@ app.get('/current-buses', (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
+  const sleeping = isSystemSleeping();
   res.json({
     status: 'healthy',
+    sleeping: sleeping,
+    sleepMessage: sleeping ? "System sleeping until 3:08am" : "System active",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     summary: {
@@ -217,13 +254,23 @@ app.get('/health', (req, res) => {
 // Schedule tasks
 console.log('🚀 Starting hiTTChaRide Cloud Service...');
 
-// Main detection every 30 seconds
-cron.schedule('*/30 * * * * *', () => {
-  processBusDetection();
+// Main detection every 4 minutes (Stage 1 & 2 processing)
+cron.schedule('*/4 * * * *', () => {
+  if (!isSystemSleeping()) {
+    console.log('🔄 Starting 4-minute detection cycle');
+    processBusDetection();
+  } else {
+    console.log('😴 Skipping detection - system sleeping');
+  }
 });
 
 // 2-minute cleanup (extra validation)
 cron.schedule('*/2 * * * *', async () => {
+  if (isSystemSleeping()) {
+    console.log('😴 Skipping 2-min cleanup - system sleeping');
+    return;
+  }
+  
   console.log('🧹 Running 2-minute cleanup check...');
   const busVehicles = await fetchTTCVehicles();
   const currentVehicleIds = busVehicles.map(v => v.id);
@@ -243,8 +290,46 @@ cron.schedule('*/2 * * * *', async () => {
   }
 });
 
+// 10-minute FULL cleanup (safety check for map buses)
+cron.schedule('*/10 * * * *', async () => {
+  if (isSystemSleeping()) {
+    console.log('😴 Skipping 10-min cleanup - system sleeping');
+    return;
+  }
+  
+  console.log('🔥 Running 10-minute FULL cleanup check...');
+  const busVehicles = await fetchTTCVehicles();
+  const currentVehicleIds = busVehicles.map(v => v.id);
+  
+  const before = outOfServiceVehicles.length;
+  
+  // AGGRESSIVE cleanup - remove ANY bus found in active API
+  outOfServiceVehicles = outOfServiceVehicles.filter(v => {
+    const isInAPI = currentVehicleIds.includes(v.id);
+    const expired = v.broadcastUntil <= new Date();
+    
+    if (isInAPI || expired) {
+      console.log(`🔥 FULL CLEANUP removed ${v.id} - InAPI=${isInAPI}, Expired=${expired}`);
+      return false;
+    }
+    return true;
+  });
+  
+  const cleaned = before - outOfServiceVehicles.length;
+  if (cleaned > 0) {
+    console.log(`🔥 FULL cleanup removed ${cleaned} buses - map now clean`);
+  } else {
+    console.log('🔥 FULL cleanup complete - no false positives found');
+  }
+});
+
 // Start initial processing
-processBusDetection();
+if (!isSystemSleeping()) {
+  console.log('🚀 Starting initial bus detection');
+  processBusDetection();
+} else {
+  console.log('😴 System starting in sleep mode - no initial processing');
+}
 
 // Start server
 app.listen(PORT, () => {
