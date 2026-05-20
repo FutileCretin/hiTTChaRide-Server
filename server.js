@@ -11,7 +11,8 @@ app.use(express.json());
 
 // In-memory storage (will move to proper database)
 let vehicles = [];
-let pendingVehicles = [];
+let pendingVehicles = [];        // Stage 1: 4-minute initial pending
+let confirmationVehicles = [];   // Stage 2: 2-minute confirmation pending  
 let outOfServiceVehicles = [];
 
 // Interface definitions (matching your app)
@@ -84,7 +85,7 @@ async function fetchTTCVehicles() {
   }
 }
 
-// Main processing logic (your 1min + 4min system)
+// Main processing logic - 2-stage pending system (4min + 2min)
 async function processBusDetection() {
   const busVehicles = await fetchTTCVehicles();
   if (busVehicles.length === 0) return;
@@ -93,33 +94,59 @@ async function processBusDetection() {
   const previousVehicleIds = vehicles.map(v => v.id);
   const currentVehicleIds = busVehicles.map(v => v.id);
   
-  // Find vehicles that disappeared (went out of service)
+  // STAGE 1: Find vehicles that disappeared - add to 4-minute pending
   const disappearedIds = previousVehicleIds.filter(id => !currentVehicleIds.includes(id));
-  
-  // Add newly disappeared buses to pending list (1-minute buffer)
   const newPending = disappearedIds
     .map(id => vehicles.find(v => v.id === id))
     .filter(Boolean)
     .map(vehicle => new PendingVehicle(vehicle, now));
   
-  // Update pending vehicles list
+  // Update Stage 1 pending list (remove buses that reappeared)
   pendingVehicles = pendingVehicles
-    .filter(v => !currentVehicleIds.includes(v.id)) // Remove buses that reappeared
-    .concat(newPending.filter(v => !pendingVehicles.some(p => p.id === v.id))); // Add unique new pending
+    .filter(v => !currentVehicleIds.includes(v.id))
+    .concat(newPending.filter(v => !pendingVehicles.some(p => p.id === v.id)));
   
   if (newPending.length > 0) {
-    console.log(`➕ Added ${newPending.length} buses to pending:`, newPending.map(v => v.id));
+    console.log(`🟡 STAGE 1: Added ${newPending.length} buses to 4-min pending:`, newPending.map(v => v.id));
   }
   
-  // Promote buses that have been missing for 4+ minutes AND were moving
+  // STAGE 2: Move buses from 4-min pending to 2-min confirmation after 4 minutes
   const fourMinutesAgo = new Date(now.getTime() - 4 * 60 * 1000);
-  const vehiclesToPromote = pendingVehicles.filter(v => 
+  const toConfirmation = pendingVehicles.filter(v => 
     v.disappearedAt <= fourMinutesAgo && 
     !currentVehicleIds.includes(v.id) &&
-    v.speedKmHr > 5  // Only promote buses that were moving (>5 km/h)
+    v.speedKmHr > 5  // Only buses that were moving
   );
   
-  // FORCED removal - completely rebuild list without false positives
+  // Move to confirmation list
+  const newConfirmation = toConfirmation.filter(v => 
+    !confirmationVehicles.some(c => c.id === v.id)
+  );
+  
+  confirmationVehicles = confirmationVehicles
+    .filter(v => !currentVehicleIds.includes(v.id)) // Remove buses that reappeared
+    .concat(newConfirmation);
+  
+  // Remove promoted buses from Stage 1 pending
+  const promotedIds = toConfirmation.map(v => v.id);
+  pendingVehicles = pendingVehicles.filter(v => !promotedIds.includes(v.id));
+  
+  if (newConfirmation.length > 0) {
+    console.log(`🟠 STAGE 2: Moved ${newConfirmation.length} buses to 2-min confirmation:`, newConfirmation.map(v => v.id));
+  }
+  
+  // STAGE 3: Promote buses from confirmation to map after 2 more minutes
+  const sixMinutesAgo = new Date(now.getTime() - 6 * 60 * 1000); // 4min + 2min = 6min total
+  const vehiclesToPromote = confirmationVehicles.filter(v => 
+    v.disappearedAt <= sixMinutesAgo && 
+    !currentVehicleIds.includes(v.id)
+  );
+  
+  // Remove promoted buses from confirmation list
+  const finalPromotedIds = vehiclesToPromote.map(v => v.id);
+  confirmationVehicles = confirmationVehicles.filter(v => !finalPromotedIds.includes(v.id));
+  
+  // CLEANUP: Remove any buses that are back in service
   outOfServiceVehicles = outOfServiceVehicles.filter(v => {
     const isInAPI = currentVehicleIds.includes(v.id);
     const expired = v.broadcastUntil <= now;
@@ -127,13 +154,13 @@ async function processBusDetection() {
     const shouldRemove = isInAPI || expired;
     
     if (shouldRemove) {
-      console.log(`🔥 REMOVING ${v.id} - InAPI=${isInAPI}, Expired=${expired}`);
+      console.log(`🔥 CLEANUP: Removing ${v.id} - InAPI=${isInAPI}, Expired=${expired}`);
     }
     
     return !shouldRemove;
   });
   
-  // Convert promoted vehicles to out-of-service format
+  // Convert confirmed vehicles to map format
   const promoted = vehiclesToPromote.map(vehicle => 
     new OutOfServiceVehicle(
       vehicle,
@@ -144,7 +171,7 @@ async function processBusDetection() {
     )
   );
   
-  // Add promoted vehicles (only if not already in list AND not in API)
+  // Add to map (only unique buses not already displayed)
   const existingIds = outOfServiceVehicles.map(v => v.id);
   const uniquePromoted = promoted.filter(v => 
     !existingIds.includes(v.id) && !currentVehicleIds.includes(v.id)
@@ -153,10 +180,10 @@ async function processBusDetection() {
   outOfServiceVehicles = outOfServiceVehicles.concat(uniquePromoted);
   
   if (uniquePromoted.length > 0) {
-    console.log(`🚌 Promoted ${uniquePromoted.length} buses to map:`, uniquePromoted.map(v => v.id));
+    console.log(`🟢 STAGE 3: Promoted ${uniquePromoted.length} buses to MAP:`, uniquePromoted.map(v => v.id));
   }
   
-  console.log(`📊 SUMMARY: Active=${busVehicles.length}, Pending=${pendingVehicles.length}, Broadcasting=${outOfServiceVehicles.length}`);
+  console.log(`📊 SUMMARY: Active=${busVehicles.length}, Pending-4min=${pendingVehicles.length}, Confirmation-2min=${confirmationVehicles.length}, Broadcasting=${outOfServiceVehicles.length}`);
   
   // Update vehicles for next cycle
   vehicles = busVehicles;
@@ -180,7 +207,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     summary: {
       active: vehicles.length,
-      pending: pendingVehicles.length,
+      pending4min: pendingVehicles.length,
+      confirmation2min: confirmationVehicles.length,
       broadcasting: outOfServiceVehicles.length
     }
   });
