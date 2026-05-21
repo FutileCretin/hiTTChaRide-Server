@@ -185,7 +185,7 @@ async function processBusDetection() {
     new OutOfServiceVehicle(
       vehicle,
       vehicle.disappearedAt,
-      new Date(now.getTime() + 30 * 60 * 1000), // 30 minutes from now
+      new Date(now.getTime() + 25 * 60 * 1000), // 25 minutes from now
       vehicle.lat,
       vehicle.lon
     )
@@ -254,10 +254,10 @@ app.get('/health', (req, res) => {
 // Schedule tasks
 console.log('🚀 Starting hiTTChaRide Cloud Service...');
 
-// Main detection every 4 minutes (Stage 1 & 2 processing)
-cron.schedule('*/4 * * * *', () => {
+// Main detection every 1 minute (Stage 1 & 2 processing)
+cron.schedule('*/1 * * * *', () => {
   if (!isSystemSleeping()) {
-    console.log('🔄 Starting 4-minute detection cycle');
+    console.log('🔄 Starting 1-minute detection cycle');
     processBusDetection();
   } else {
     console.log('😴 Skipping detection - system sleeping');
