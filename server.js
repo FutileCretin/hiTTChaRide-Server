@@ -264,36 +264,7 @@ cron.schedule('*/4 * * * *', () => {
   }
 });
 
-// 2-minute cleanup (extra validation) - AGGRESSIVE mode
-cron.schedule('*/2 * * * *', async () => {
-  if (isSystemSleeping()) {
-    console.log('😴 Skipping 2-min cleanup - system sleeping');
-    return;
-  }
-  
-  console.log('🧹 Running 2-minute AGGRESSIVE cleanup check...');
-  const busVehicles = await fetchTTCVehicles();
-  const currentVehicleIds = busVehicles.map(v => v.id);
-  
-  const before = outOfServiceVehicles.length;
-  outOfServiceVehicles = outOfServiceVehicles.filter(v => {
-    const isInAPI = currentVehicleIds.includes(v.id);
-    const expired = v.broadcastUntil <= new Date();
-    
-    if (isInAPI || expired) {
-      console.log(`🧹 AGGRESSIVE cleanup removed ${v.id} - InAPI=${isInAPI}, Expired=${expired}`);
-      return false;
-    }
-    return true;
-  });
-  
-  const cleaned = before - outOfServiceVehicles.length;
-  if (cleaned > 0) {
-    console.log(`🧹 AGGRESSIVE cleanup removed ${cleaned} buses`);
-  } else {
-    console.log('🧹 AGGRESSIVE cleanup - no false positives found');
-  }
-});
+// Removed 2-minute cleanup - simplified to 5-minute only
 
 // 5-minute FULL cleanup (safety check for map buses)
 cron.schedule('*/5 * * * *', async () => {
