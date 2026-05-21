@@ -254,39 +254,44 @@ app.get('/health', (req, res) => {
 // Schedule tasks
 console.log('🚀 Starting hiTTChaRide Cloud Service...');
 
-// Main detection every 1 minute (Stage 1 & 2 processing)
-cron.schedule('*/1 * * * *', () => {
+// Main detection every 4 minutes (Stage 1 & 2 processing)
+cron.schedule('*/4 * * * *', () => {
   if (!isSystemSleeping()) {
-    console.log('🔄 Starting 1-minute detection cycle');
+    console.log('🔄 Starting 4-minute detection cycle');
     processBusDetection();
   } else {
     console.log('😴 Skipping detection - system sleeping');
   }
 });
 
-// 2-minute cleanup (extra validation)
+// 2-minute cleanup (extra validation) - AGGRESSIVE mode
 cron.schedule('*/2 * * * *', async () => {
   if (isSystemSleeping()) {
     console.log('😴 Skipping 2-min cleanup - system sleeping');
     return;
   }
   
-  console.log('🧹 Running 2-minute cleanup check...');
+  console.log('🧹 Running 2-minute AGGRESSIVE cleanup check...');
   const busVehicles = await fetchTTCVehicles();
   const currentVehicleIds = busVehicles.map(v => v.id);
   
   const before = outOfServiceVehicles.length;
   outOfServiceVehicles = outOfServiceVehicles.filter(v => {
     const isInAPI = currentVehicleIds.includes(v.id);
-    if (isInAPI) {
-      console.log(`🧹 Cleanup removed ${v.id} - back in service`);
+    const expired = v.broadcastUntil <= new Date();
+    
+    if (isInAPI || expired) {
+      console.log(`🧹 AGGRESSIVE cleanup removed ${v.id} - InAPI=${isInAPI}, Expired=${expired}`);
+      return false;
     }
-    return !isInAPI;
+    return true;
   });
   
   const cleaned = before - outOfServiceVehicles.length;
   if (cleaned > 0) {
-    console.log(`🧹 Cleaned up ${cleaned} buses`);
+    console.log(`🧹 AGGRESSIVE cleanup removed ${cleaned} buses`);
+  } else {
+    console.log('🧹 AGGRESSIVE cleanup - no false positives found');
   }
 });
 
