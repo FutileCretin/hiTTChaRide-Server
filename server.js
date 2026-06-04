@@ -14,6 +14,7 @@ let vehicles = [];
 let pendingVehicles = [];        // Stage 1: 4-minute initial pending
 let confirmationVehicles = [];   // Stage 2: 2-minute confirmation pending  
 let outOfServiceVehicles = [];
+let lastBulkUpdateTime = 0;       // Timestamp for incremental bulk updates
 
 // Sleep mode configuration (Toronto Eastern Time)
 function isSystemSleeping() {
@@ -251,74 +252,80 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Individual GPS tracking function (server-side)
-async function updateIndividualGPS() {
+// Bulk GPS tracking function (TransSee-style efficiency)
+async function updateBulkGPS() {
   if (isSystemSleeping() || outOfServiceVehicles.length === 0) {
     return;
   }
   
-  console.log(`🔄 [SERVER] Individual GPS tracking for ${outOfServiceVehicles.length} buses`);
+  console.log(`🚄 [BULK] GPS tracking for ${outOfServiceVehicles.length} buses using bulk API`);
   
   try {
-    const updatedVehicles = await Promise.all(
-      outOfServiceVehicles.map(async (bus) => {
-        try {
-          console.log(`📍 [SERVER] GPS lookup for bus ${bus.id}`);
-          const response = await fetch(`https://retro.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&r=${bus.id}&t=0`);
-          const xmlText = await response.text();
-          console.log(`🔍 [SERVER] Bus ${bus.id} API response: ${xmlText.slice(0, 150)}`);
-          
-          const vehicleMatch = xmlText.match(/<vehicle[^>]*>/)?.[0];
-          if (vehicleMatch) {
-            const lat = vehicleMatch.match(/lat="([^"]*)"/)?.[ 1];
-            const lon = vehicleMatch.match(/lon="([^"]*)"/)?.[ 1];
-            const heading = vehicleMatch.match(/heading="([^"]*)"/)?.[ 1];
-            const speedKmHr = vehicleMatch.match(/speedKmHr="([^"]*)"/)?.[ 1];
-            
-            if (lat && lon) {
-              const newLat = parseFloat(lat);
-              const newLon = parseFloat(lon);
-              const newHeading = parseInt(heading || '0');
-              const newSpeed = parseInt(speedKmHr || '0');
-              
-              console.log(`📍 [SERVER] Bus ${bus.id} GPS: ${lat}, ${lon} (heading: ${newHeading}°, speed: ${newSpeed}km/h)`);
-              
-              return {
-                ...bus,
-                lat: newLat,
-                lon: newLon,
-                heading: newHeading,
-                speedKmHr: newSpeed,
-                lastUpdateTime: new Date()
-              };
-            }
-          } else {
-            // No vehicle data returned - bus is likely parked/off-duty
-            console.log(`⚠️ [SERVER] Bus ${bus.id} returned no GPS data - marking for removal`);
-            return null; // Mark for removal
-          }
-          
-          return bus; // Keep existing data if partial update
-        } catch (error) {
-          console.error(`❌ [SERVER] Individual GPS error for bus ${bus.id}:`, error);
-          return bus;
-        }
-      })
-    );
+    // Use timestamp for incremental updates (TransSee method)
+    const apiUrl = `https://retro.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&t=${lastBulkUpdateTime}`;
+    console.log(`🚄 [BULK] Fetching updates since timestamp: ${lastBulkUpdateTime}`);
     
-    // Filter out null values (buses that returned no GPS data) and update coordinates
-    const activeVehicles = updatedVehicles.filter(vehicle => vehicle !== null);
-    const removedCount = updatedVehicles.length - activeVehicles.length;
+    const response = await fetch(apiUrl);
+    const xmlText = await response.text();
     
-    outOfServiceVehicles = activeVehicles;
-    
-    if (removedCount > 0) {
-      console.log(`🗑️ [SERVER] Removed ${removedCount} buses with no GPS data`);
+    // Extract new timestamp for next request
+    const lastTimeMatch = xmlText.match(/<lastTime time="([^"]*)"\/>/);
+    if (lastTimeMatch) {
+      lastBulkUpdateTime = parseInt(lastTimeMatch[1]);
+      console.log(`🚄 [BULK] Updated timestamp to: ${lastBulkUpdateTime}`);
     }
-    console.log(`✅ [SERVER] GPS tracking complete - ${activeVehicles.length} buses active`);
+    
+    // Parse all vehicles from bulk response
+    const vehicleMatches = xmlText.match(/<vehicle[^>]*>/g) || [];
+    const bulkVehicleMap = new Map();
+    
+    vehicleMatches.forEach(match => {
+      const id = match.match(/id="([^"]*)"/)?.[ 1];
+      const lat = match.match(/lat="([^"]*)"/)?.[ 1];
+      const lon = match.match(/lon="([^"]*)"/)?.[ 1];
+      const heading = match.match(/heading="([^"]*)"/)?.[ 1];
+      const speedKmHr = match.match(/speedKmHr="([^"]*)"/)?.[ 1];
+      
+      if (id && lat && lon) {
+        bulkVehicleMap.set(id, {
+          lat: parseFloat(lat),
+          lon: parseFloat(lon),
+          heading: parseInt(heading || '0'),
+          speedKmHr: parseInt(speedKmHr || '0')
+        });
+      }
+    });
+    
+    console.log(`🚄 [BULK] Received ${bulkVehicleMap.size} vehicle updates from API`);
+    
+    // Update only our tracked out-of-service buses
+    let updatedCount = 0;
+    const trackedBusIds = outOfServiceVehicles.map(bus => bus.id);
+    
+    outOfServiceVehicles = outOfServiceVehicles.map(bus => {
+      if (bulkVehicleMap.has(bus.id)) {
+        const update = bulkVehicleMap.get(bus.id);
+        updatedCount++;
+        
+        console.log(`🎯 [BULK] Updated bus ${bus.id}: ${update.lat}, ${update.lon} (heading: ${update.heading}°, speed: ${update.speedKmHr}km/h)`);
+        
+        return {
+          ...bus,
+          lat: update.lat,
+          lon: update.lon,
+          heading: update.heading,
+          speedKmHr: update.speedKmHr,
+          lastUpdateTime: new Date()
+        };
+      }
+      
+      return bus; // Keep existing data if no update available
+    });
+    
+    console.log(`✅ [BULK] Tracking complete - ${updatedCount}/${outOfServiceVehicles.length} buses updated`);
     
   } catch (error) {
-    console.error('❌ [SERVER] Individual GPS tracking error:', error);
+    console.error('❌ [BULK] GPS tracking error:', error);
   }
 }
 
@@ -335,10 +342,10 @@ cron.schedule('*/4 * * * *', () => {
   }
 });
 
-// Server-side GPS tracking every 10 seconds
+// Server-side bulk GPS tracking every 10 seconds (TransSee method)
 setInterval(() => {
   if (!isSystemSleeping()) {
-    updateIndividualGPS();
+    updateBulkGPS();
   }
 }, 10000); // 10 seconds
 
