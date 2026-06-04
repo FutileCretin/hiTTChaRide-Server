@@ -291,9 +291,13 @@ async function updateIndividualGPS() {
                 lastUpdateTime: new Date()
               };
             }
+          } else {
+            // No vehicle data returned - bus is likely parked/off-duty
+            console.log(`⚠️ [SERVER] Bus ${bus.id} returned no GPS data - marking for removal`);
+            return null; // Mark for removal
           }
           
-          return bus; // Keep existing data if no update
+          return bus; // Keep existing data if partial update
         } catch (error) {
           console.error(`❌ [SERVER] Individual GPS error for bus ${bus.id}:`, error);
           return bus;
@@ -301,9 +305,16 @@ async function updateIndividualGPS() {
       })
     );
     
-    // Update the outOfServiceVehicles with fresh coordinates
-    outOfServiceVehicles = updatedVehicles;
-    console.log(`✅ [SERVER] GPS tracking complete - ${updatedVehicles.length} buses updated`);
+    // Filter out null values (buses that returned no GPS data) and update coordinates
+    const activeVehicles = updatedVehicles.filter(vehicle => vehicle !== null);
+    const removedCount = updatedVehicles.length - activeVehicles.length;
+    
+    outOfServiceVehicles = activeVehicles;
+    
+    if (removedCount > 0) {
+      console.log(`🗑️ [SERVER] Removed ${removedCount} buses with no GPS data`);
+    }
+    console.log(`✅ [SERVER] GPS tracking complete - ${activeVehicles.length} buses active`);
     
   } catch (error) {
     console.error('❌ [SERVER] Individual GPS tracking error:', error);
