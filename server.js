@@ -264,7 +264,7 @@ async function updateIndividualGPS() {
       outOfServiceVehicles.map(async (bus) => {
         try {
           console.log(`📍 [SERVER] GPS lookup for bus ${bus.id}`);
-          const response = await fetch(`https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&r=${bus.id}`);
+          const response = await fetch(`https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&r=${bus.id}&t=0`);
           const xmlText = await response.text();
           
           const vehicleMatch = xmlText.match(/<vehicle[^>]*>/)?.[0];
