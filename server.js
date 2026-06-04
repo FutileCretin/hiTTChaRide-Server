@@ -251,6 +251,65 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Individual GPS tracking function (server-side)
+async function updateIndividualGPS() {
+  if (isSystemSleeping() || outOfServiceVehicles.length === 0) {
+    return;
+  }
+  
+  console.log(`🔄 [SERVER] Individual GPS tracking for ${outOfServiceVehicles.length} buses`);
+  
+  try {
+    const updatedVehicles = await Promise.all(
+      outOfServiceVehicles.map(async (bus) => {
+        try {
+          console.log(`📍 [SERVER] GPS lookup for bus ${bus.id}`);
+          const response = await fetch(`https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&r=${bus.id}`);
+          const xmlText = await response.text();
+          
+          const vehicleMatch = xmlText.match(/<vehicle[^>]*>/)?.[0];
+          if (vehicleMatch) {
+            const lat = vehicleMatch.match(/lat="([^"]*)"/)?.[ 1];
+            const lon = vehicleMatch.match(/lon="([^"]*)"/)?.[ 1];
+            const heading = vehicleMatch.match(/heading="([^"]*)"/)?.[ 1];
+            const speedKmHr = vehicleMatch.match(/speedKmHr="([^"]*)"/)?.[ 1];
+            
+            if (lat && lon) {
+              const newLat = parseFloat(lat);
+              const newLon = parseFloat(lon);
+              const newHeading = parseInt(heading || '0');
+              const newSpeed = parseInt(speedKmHr || '0');
+              
+              console.log(`📍 [SERVER] Bus ${bus.id} GPS: ${lat}, ${lon} (heading: ${newHeading}°, speed: ${newSpeed}km/h)`);
+              
+              return {
+                ...bus,
+                lat: newLat,
+                lon: newLon,
+                heading: newHeading,
+                speedKmHr: newSpeed,
+                lastUpdateTime: new Date()
+              };
+            }
+          }
+          
+          return bus; // Keep existing data if no update
+        } catch (error) {
+          console.error(`❌ [SERVER] Individual GPS error for bus ${bus.id}:`, error);
+          return bus;
+        }
+      })
+    );
+    
+    // Update the outOfServiceVehicles with fresh coordinates
+    outOfServiceVehicles = updatedVehicles;
+    console.log(`✅ [SERVER] GPS tracking complete - ${updatedVehicles.length} buses updated`);
+    
+  } catch (error) {
+    console.error('❌ [SERVER] Individual GPS tracking error:', error);
+  }
+}
+
 // Schedule tasks
 console.log('🚀 Starting hiTTChaRide Cloud Service...');
 
@@ -263,6 +322,13 @@ cron.schedule('*/4 * * * *', () => {
     console.log('😴 Skipping detection - system sleeping');
   }
 });
+
+// Server-side GPS tracking every 10 seconds
+setInterval(() => {
+  if (!isSystemSleeping()) {
+    updateIndividualGPS();
+  }
+}, 10000); // 10 seconds
 
 // Removed 2-minute cleanup - simplified to 5-minute only
 
