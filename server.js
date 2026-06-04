@@ -399,4 +399,4 @@ app.listen(PORT, () => {
   console.log(`📱 Bus data: http://localhost:${PORT}/current-buses`);
 });
 
-// Force redeploy after Railway outage - timestamp: 2026-05-20
+// Force redeploy - bulk tracking deployment - timestamp: 2026-06-04
