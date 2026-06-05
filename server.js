@@ -252,13 +252,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Bulk GPS tracking function (TransSee-style efficiency)
+// TransSee-style GPS tracking with 30-second frequency and data validation
 async function updateBulkGPS() {
   if (isSystemSleeping() || outOfServiceVehicles.length === 0) {
     return;
   }
   
-  console.log(`🚄 [BULK] GPS tracking for ${outOfServiceVehicles.length} buses using bulk API`);
+  console.log(`🚄 [TRANSEE] GPS tracking for ${outOfServiceVehicles.length} buses using TransSee methodology (30s intervals)`);
   
   try {
     // Use timestamp for incremental updates (TransSee method)
@@ -390,7 +390,7 @@ setInterval(() => {
   if (!isSystemSleeping()) {
     updateBulkGPS();
   }
-}, 10000); // 10 seconds
+}, 30000); // 30 seconds (TransSee frequency)
 
 // Removed 2-minute cleanup - simplified to 5-minute only
 
