@@ -85,8 +85,10 @@ async function fetchTTCVehicles() {
       const heading = match.match(/heading="([^"]*)"/)?.[ 1];
       const speedKmHr = match.match(/speedKmHr="([^"]*)"/)?.[ 1];
       
-      // Only include buses (exclude streetcars that start with 5)
-      if (id && routeTag && lat && lon && !routeTag.startsWith('5')) {
+      // Only include buses (exclude streetcars that start with 5 and LRVs 4500-4699)
+      const vehicleId = parseInt(id);
+      const isLRV = vehicleId >= 4500 && vehicleId <= 4699;
+      if (id && routeTag && lat && lon && !routeTag.startsWith('5') && !isLRV) {
         busVehicles.push(new Vehicle(
           id,
           routeTag,
