@@ -298,16 +298,18 @@ async function updateBulkGPS() {
     
     console.log(`🚄 [BULK] Received ${bulkVehicleMap.size} vehicle updates from API`);
     
-    // Update only our tracked out-of-service buses
-    let updatedCount = 0;
-    const trackedBusIds = outOfServiceVehicles.map(bus => bus.id);
+    // Update buses with API data OR dead reckoning
+    let apiUpdatedCount = 0;
+    let deadReckonedCount = 0;
+    const now = new Date();
     
     outOfServiceVehicles = outOfServiceVehicles.map(bus => {
       if (bulkVehicleMap.has(bus.id)) {
+        // Bus found in API - use fresh coordinates
         const update = bulkVehicleMap.get(bus.id);
-        updatedCount++;
+        apiUpdatedCount++;
         
-        console.log(`🎯 [BULK] Updated bus ${bus.id}: ${update.lat}, ${update.lon} (heading: ${update.heading}°, speed: ${update.speedKmHr}km/h)`);
+        console.log(`🎯 [API] Updated bus ${bus.id}: ${update.lat}, ${update.lon} (heading: ${update.heading}°, speed: ${update.speedKmHr}km/h)`);
         
         return {
           ...bus,
@@ -315,14 +317,46 @@ async function updateBulkGPS() {
           lon: update.lon,
           heading: update.heading,
           speedKmHr: update.speedKmHr,
-          lastUpdateTime: new Date()
+          lastUpdateTime: now,
+          lastKnownLat: update.lat,
+          lastKnownLon: update.lon
         };
+      } else {
+        // Bus not in API - use dead reckoning from last known position
+        const elapsedMs = now.getTime() - bus.lastUpdateTime.getTime();
+        const maxDriftMs = 60000; // Cap drift at 1 minute to prevent buses from going too far
+        
+        if (elapsedMs < maxDriftMs && bus.speedKmHr > 5) {
+          // Dead reckon forward using last known heading and speed
+          const elapsedHours = elapsedMs / 3_600_000;
+          const distKm = bus.speedKmHr * elapsedHours;
+          const R = 6371; // Earth radius in km
+          const hRad = (bus.heading * Math.PI) / 180;
+          
+          const dLat = (distKm * Math.cos(hRad) / R) * (180 / Math.PI);
+          const dLon = (distKm * Math.sin(hRad) / R) * (180 / Math.PI) / Math.cos(bus.lat * Math.PI / 180);
+          
+          const newLat = bus.lat + dLat;
+          const newLon = bus.lon + dLon;
+          deadReckonedCount++;
+          
+          console.log(`🧭 [DEAD-RECKON] Bus ${bus.id}: ${newLat.toFixed(6)}, ${newLon.toFixed(6)} (moving from ${bus.lat.toFixed(6)}, ${bus.lon.toFixed(6)})`);
+          
+          return {
+            ...bus,
+            lat: newLat,
+            lon: newLon,
+            lastUpdateTime: now
+          };
+        } else {
+          // Keep bus stationary if too much time has passed or bus is slow
+          console.log(`🔒 [STATIONARY] Bus ${bus.id}: keeping at ${bus.lat}, ${bus.lon} (elapsed: ${Math.round(elapsedMs/1000)}s, speed: ${bus.speedKmHr}km/h)`);
+          return bus;
+        }
       }
-      
-      return bus; // Keep existing data if no update available
     });
     
-    console.log(`✅ [BULK] Tracking complete - ${updatedCount}/${outOfServiceVehicles.length} buses updated`);
+    console.log(`✅ [BULK] Tracking complete - API: ${apiUpdatedCount}, Dead-Reckoned: ${deadReckonedCount}, Total: ${outOfServiceVehicles.length} buses`);
     
   } catch (error) {
     console.error('❌ [BULK] GPS tracking error:', error);
