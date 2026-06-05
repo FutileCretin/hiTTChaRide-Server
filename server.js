@@ -399,4 +399,4 @@ app.listen(PORT, () => {
   console.log(`📱 Bus data: http://localhost:${PORT}/current-buses`);
 });
 
-// Force redeploy - bulk tracking deployment - timestamp: 2026-06-04
+// Force redeploy - bulk tracking deployment - timestamp: 2026-06-05
