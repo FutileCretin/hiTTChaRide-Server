@@ -252,13 +252,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// TransSee methodology: Individual vehicle lookups for out-of-service buses
+// Individual vehicle lookups for accurate out-of-service bus tracking
 async function updateBulkGPS() {
   if (isSystemSleeping() || outOfServiceVehicles.length === 0) {
     return;
   }
   
-  console.log(`🎯 [TRANSEE] Individual GPS lookup for ${outOfServiceVehicles.length} buses using TransSee methodology`);
+  console.log(`🎯 [INDIVIDUAL] GPS lookup for ${outOfServiceVehicles.length} buses using enhanced methodology`);
   
   try {
     // Use TransSee's method: individual vehicle lookups with vehicleLocation (singular) API
@@ -269,9 +269,9 @@ async function updateBulkGPS() {
     const updatedBuses = await Promise.all(
       outOfServiceVehicles.map(async (bus) => {
         try {
-          // TransSee's API call: vehicleLocation (singular) with v= parameter
+          // Individual vehicle API call: vehicleLocation (singular) with v= parameter
           const apiUrl = `https://retro.umoiq.com/service/publicXMLFeed?command=vehicleLocation&a=ttc&v=${bus.id}`;
-          console.log(`🎯 [TRANSEE] Fetching coordinates for bus ${bus.id}`);
+          console.log(`🎯 [INDIVIDUAL] Fetching coordinates for bus ${bus.id}`);
           
           const response = await fetch(apiUrl);
           const xmlText = await response.text();
@@ -292,10 +292,10 @@ async function updateBulkGPS() {
               const newSpeed = parseInt(speedKmHr || '0');
               const ageSeconds = parseInt(secsSinceReport || '0');
               
-              // TransSee-style data validation: discard coordinates >180 seconds old
+              // Data validation: discard coordinates >180 seconds old
               if (ageSeconds <= 180) {
                 updatedCount++;
-                console.log(`✅ [TRANSEE] Bus ${bus.id}: ${newLat}, ${newLon} (heading: ${newHeading}°, speed: ${newSpeed}km/h, age: ${ageSeconds}s)`);
+                console.log(`✅ [FRESH] Bus ${bus.id}: ${newLat}, ${newLon} (heading: ${newHeading}°, speed: ${newSpeed}km/h, age: ${ageSeconds}s)`);
                 
                 return {
                   ...bus,
@@ -312,7 +312,7 @@ async function updateBulkGPS() {
             }
           }
           
-          console.log(`❌ [NO-DATA] Bus ${bus.id}: no coordinates returned from TransSee API`);
+          console.log(`❌ [NO-DATA] Bus ${bus.id}: no coordinates returned from individual API`);
           return bus;
           
         } catch (error) {
@@ -323,7 +323,7 @@ async function updateBulkGPS() {
     );
     
     outOfServiceVehicles = updatedBuses;
-    console.log(`✅ [TRANSEE] Individual tracking complete - ${updatedCount}/${outOfServiceVehicles.length} buses updated with fresh coordinates`);
+    console.log(`✅ [INDIVIDUAL] Tracking complete - ${updatedCount}/${outOfServiceVehicles.length} buses updated with fresh coordinates`);
     
   } catch (error) {
     console.error('❌ [BULK] GPS tracking error:', error);
