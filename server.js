@@ -252,120 +252,78 @@ app.get('/health', (req, res) => {
   });
 });
 
-// TransSee-style GPS tracking with 30-second frequency and data validation
+// TransSee methodology: Individual vehicle lookups for out-of-service buses
 async function updateBulkGPS() {
   if (isSystemSleeping() || outOfServiceVehicles.length === 0) {
     return;
   }
   
-  console.log(`🚄 [TRANSEE] GPS tracking for ${outOfServiceVehicles.length} buses using TransSee methodology (30s intervals)`);
+  console.log(`🎯 [TRANSEE] Individual GPS lookup for ${outOfServiceVehicles.length} buses using TransSee methodology`);
   
   try {
-    // Use timestamp for incremental updates (TransSee method)
-    const apiUrl = `https://retro.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&t=${lastBulkUpdateTime}`;
-    console.log(`🚄 [BULK] Fetching updates since timestamp: ${lastBulkUpdateTime}`);
-    
-    const response = await fetch(apiUrl);
-    const xmlText = await response.text();
-    
-    // Extract new timestamp for next request
-    const lastTimeMatch = xmlText.match(/<lastTime time="([^"]*)"\/>/);
-    if (lastTimeMatch) {
-      lastBulkUpdateTime = parseInt(lastTimeMatch[1]);
-      console.log(`🚄 [BULK] Updated timestamp to: ${lastBulkUpdateTime}`);
-    }
-    
-    // Parse all vehicles from bulk response
-    const vehicleMatches = xmlText.match(/<vehicle[^>]*>/g) || [];
-    const bulkVehicleMap = new Map();
-    
-    vehicleMatches.forEach(match => {
-      const id = match.match(/id="([^"]*)"/)?.[ 1];
-      const lat = match.match(/lat="([^"]*)"/)?.[ 1];
-      const lon = match.match(/lon="([^"]*)"/)?.[ 1];
-      const heading = match.match(/heading="([^"]*)"/)?.[ 1];
-      const speedKmHr = match.match(/speedKmHr="([^"]*)"/)?.[ 1];
-      
-      if (id && lat && lon) {
-        bulkVehicleMap.set(id, {
-          lat: parseFloat(lat),
-          lon: parseFloat(lon),
-          heading: parseInt(heading || '0'),
-          speedKmHr: parseInt(speedKmHr || '0')
-        });
-      }
-    });
-    
-    console.log(`🚄 [BULK] Received ${bulkVehicleMap.size} vehicle updates from API`);
-    
-    // Update buses with API data OR dead reckoning
-    let apiUpdatedCount = 0;
-    let deadReckonedCount = 0;
+    // Use TransSee's method: individual vehicle lookups with vehicleLocation (singular) API
+    let updatedCount = 0;
     const now = new Date();
     
-    outOfServiceVehicles = outOfServiceVehicles.map(bus => {
-      if (bulkVehicleMap.has(bus.id)) {
-        // Bus found in API - use fresh coordinates
-        const update = bulkVehicleMap.get(bus.id);
-        apiUpdatedCount++;
-        
-        console.log(`🎯 [API] Updated bus ${bus.id}: ${update.lat}, ${update.lon} (heading: ${update.heading}°, speed: ${update.speedKmHr}km/h)`);
-        
-        return {
-          ...bus,
-          lat: update.lat,
-          lon: update.lon,
-          heading: update.heading,
-          speedKmHr: update.speedKmHr,
-          lastUpdateTime: now,
-          lastKnownLat: update.lat,
-          lastKnownLon: update.lon
-        };
-      } else {
-        // Bus not in API - use dead reckoning from last known position
-        const elapsedMs = now.getTime() - bus.lastUpdateTime.getTime();
-        const maxDriftMs = 60000; // Cap drift at 1 minute to prevent buses from going too far
-        
-        if (elapsedMs < maxDriftMs && bus.speedKmHr > 5) {
-          // Dead reckon forward using last known heading and speed
-          const elapsedHours = elapsedMs / 3_600_000;
-          const distKm = bus.speedKmHr * elapsedHours;
-          const R = 6371; // Earth radius in km
-          const hRad = (bus.heading * Math.PI) / 180;
+    // Update each bus individually using TransSee's method
+    const updatedBuses = await Promise.all(
+      outOfServiceVehicles.map(async (bus) => {
+        try {
+          // TransSee's API call: vehicleLocation (singular) with v= parameter
+          const apiUrl = `https://retro.umoiq.com/service/publicXMLFeed?command=vehicleLocation&a=ttc&v=${bus.id}`;
+          console.log(`🎯 [TRANSEE] Fetching coordinates for bus ${bus.id}`);
           
-          const dLat = (distKm * Math.cos(hRad) / R) * (180 / Math.PI);
-          const dLon = (distKm * Math.sin(hRad) / R) * (180 / Math.PI) / Math.cos(bus.lat * Math.PI / 180);
+          const response = await fetch(apiUrl);
+          const xmlText = await response.text();
           
-          const newLat = bus.lat + dLat;
-          const newLon = bus.lon + dLon;
-          deadReckonedCount++;
+          // Parse individual vehicle response
+          const vehicleMatch = xmlText.match(/<vehicle[^>]*>/)?.[0];
+          if (vehicleMatch) {
+            const lat = vehicleMatch.match(/lat="([^"]*)"/)?.[ 1];
+            const lon = vehicleMatch.match(/lon="([^"]*)"/)?.[ 1];
+            const heading = vehicleMatch.match(/heading="([^"]*)"/)?.[ 1];
+            const speedKmHr = vehicleMatch.match(/speedKmHr="([^"]*)"/)?.[ 1];
+            const secsSinceReport = vehicleMatch.match(/secsSinceReport="([^"]*)"/)?.[ 1];
+            
+            if (lat && lon) {
+              const newLat = parseFloat(lat);
+              const newLon = parseFloat(lon);
+              const newHeading = parseInt(heading || '0');
+              const newSpeed = parseInt(speedKmHr || '0');
+              const ageSeconds = parseInt(secsSinceReport || '0');
+              
+              // TransSee-style data validation: discard coordinates >180 seconds old
+              if (ageSeconds <= 180) {
+                updatedCount++;
+                console.log(`✅ [TRANSEE] Bus ${bus.id}: ${newLat}, ${newLon} (heading: ${newHeading}°, speed: ${newSpeed}km/h, age: ${ageSeconds}s)`);
+                
+                return {
+                  ...bus,
+                  lat: newLat,
+                  lon: newLon,
+                  heading: newHeading,
+                  speedKmHr: newSpeed,
+                  lastUpdateTime: now
+                };
+              } else {
+                console.log(`⏰ [STALE] Bus ${bus.id}: coordinates too old (${ageSeconds}s), keeping previous position`);
+                return bus;
+              }
+            }
+          }
           
-          console.log(`🧭 [DEAD-RECKON] Bus ${bus.id}: ${newLat.toFixed(6)}, ${newLon.toFixed(6)} (moving from ${bus.lat.toFixed(6)}, ${bus.lon.toFixed(6)})`);
+          console.log(`❌ [NO-DATA] Bus ${bus.id}: no coordinates returned from TransSee API`);
+          return bus;
           
-          return {
-            ...bus,
-            lat: newLat,
-            lon: newLon,
-            lastUpdateTime: now
-          };
-        } else if (elapsedMs >= maxDriftMs) {
-          // Try individual API lookup for fresh coordinates (sliding fix)
-          console.log(`🔄 [REFRESH] Bus ${bus.id}: attempting coordinate refresh after ${Math.round(elapsedMs/1000)}s drift`);
-          
-          // Reset last update time to allow fresh individual lookup on next cycle
-          return {
-            ...bus,
-            lastUpdateTime: new Date(now.getTime() - maxDriftMs + 30000) // Trigger refresh in 30 seconds
-          };
-        } else {
-          // Keep bus stationary if slow
-          console.log(`🔒 [STATIONARY] Bus ${bus.id}: keeping at ${bus.lat}, ${bus.lon} (speed: ${bus.speedKmHr}km/h)`);
+        } catch (error) {
+          console.error(`❌ [ERROR] Bus ${bus.id} individual lookup failed:`, error.message);
           return bus;
         }
-      }
-    });
+      })
+    );
     
-    console.log(`✅ [BULK] Tracking complete - API: ${apiUpdatedCount}, Dead-Reckoned: ${deadReckonedCount}, Total: ${outOfServiceVehicles.length} buses`);
+    outOfServiceVehicles = updatedBuses;
+    console.log(`✅ [TRANSEE] Individual tracking complete - ${updatedCount}/${outOfServiceVehicles.length} buses updated with fresh coordinates`);
     
   } catch (error) {
     console.error('❌ [BULK] GPS tracking error:', error);
