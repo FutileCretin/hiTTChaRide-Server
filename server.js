@@ -186,7 +186,7 @@ async function processBusDetection() {
     new OutOfServiceVehicle(
       vehicle,
       vehicle.disappearedAt,
-      new Date(now.getTime() + 25 * 60 * 1000), // 25 minutes from now
+      new Date(now.getTime() + 20 * 60 * 1000), // 20 minutes from now
       vehicle.lat,
       vehicle.lon
     )
@@ -348,9 +348,18 @@ async function updateBulkGPS() {
             lon: newLon,
             lastUpdateTime: now
           };
+        } else if (elapsedMs >= maxDriftMs) {
+          // Try individual API lookup for fresh coordinates (sliding fix)
+          console.log(`🔄 [REFRESH] Bus ${bus.id}: attempting coordinate refresh after ${Math.round(elapsedMs/1000)}s drift`);
+          
+          // Reset last update time to allow fresh individual lookup on next cycle
+          return {
+            ...bus,
+            lastUpdateTime: new Date(now.getTime() - maxDriftMs + 30000) // Trigger refresh in 30 seconds
+          };
         } else {
-          // Keep bus stationary if too much time has passed or bus is slow
-          console.log(`🔒 [STATIONARY] Bus ${bus.id}: keeping at ${bus.lat}, ${bus.lon} (elapsed: ${Math.round(elapsedMs/1000)}s, speed: ${bus.speedKmHr}km/h)`);
+          // Keep bus stationary if slow
+          console.log(`🔒 [STATIONARY] Bus ${bus.id}: keeping at ${bus.lat}, ${bus.lon} (speed: ${bus.speedKmHr}km/h)`);
           return bus;
         }
       }
