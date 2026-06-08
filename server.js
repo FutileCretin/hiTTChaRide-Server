@@ -212,6 +212,243 @@ async function processBusDetection() {
   vehicles = busVehicles;
 }
 
+// Web frontend - serve the hiTTChaRide web app
+app.get('/', (req, res) => {
+  const webHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>hiTTChaRide - Live Bus Tracking</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+
+        .privacy-link {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 8px;
+            border-radius: 4px;
+            z-index: 1000;
+        }
+
+        .privacy-link a {
+            color: white;
+            font-size: 12px;
+            text-decoration: underline;
+        }
+
+        .sleep-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #2c3e50;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+            z-index: 2000;
+        }
+
+        .sleep-icon {
+            width: 150px;
+            height: 150px;
+            margin-bottom: 40px;
+            background-color: #34495e;
+            border-radius: 75px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 60px;
+        }
+
+        .sleep-message {
+            text-align: center;
+        }
+
+        .sleep-message-line {
+            color: #ecf0f1;
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #333;
+            font-size: 16px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">Loading hiTTChaRide...</div>
+    <div id="sleep-screen" class="sleep-container" style="display: none;">
+        <div class="sleep-icon">😴</div>
+        <div class="sleep-message">
+            <div class="sleep-message-line">4000</div>
+            <div class="sleep-message-line">Sorry... Not In Service</div>
+            <div class="sleep-message-line">till 3:08am</div>
+        </div>
+    </div>
+    <div id="map"></div>
+    <div class="privacy-link">
+        <a href="https://hittcharide.github.io/privacy/" target="_blank">Privacy</a>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        
+        // Toronto center coordinates
+        const TORONTO_CENTER = { lat: 43.6532, lng: -79.3832 };
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 11,
+                center: TORONTO_CENTER,
+                styles: [
+                    {
+                        featureType: 'transit',
+                        stylers: [{ visibility: 'simplified' }]
+                    }
+                ]
+            });
+
+            // Start fetching bus data
+            fetchBusData();
+            setInterval(fetchBusData, 30000); // Every 30 seconds like the app
+        }
+
+        async function fetchBusData() {
+            try {
+                console.log('📱 Fetching from cloud server...');
+                const response = await fetch('/current-buses');
+                const data = await response.json();
+                
+                document.getElementById('loading').style.display = 'none';
+                
+                // Check if system is sleeping
+                if (data.sleeping) {
+                    console.log('😴 Server is sleeping');
+                    document.getElementById('sleep-screen').style.display = 'flex';
+                    document.getElementById('map').style.display = 'none';
+                    clearMarkers();
+                    return;
+                } else {
+                    document.getElementById('sleep-screen').style.display = 'none';
+                    document.getElementById('map').style.display = 'block';
+                }
+                
+                console.log(\`☁️ Cloud data: \${data.count || 0} buses ready to display\`);
+                
+                // Clear existing markers
+                clearMarkers();
+                
+                // Add new markers for each bus
+                const buses = data.buses || [];
+                buses.forEach(bus => {
+                    addBusMarker(bus);
+                });
+                
+                console.log(\`🌐 Web updated: \${buses.length} buses displayed\`);
+                
+            } catch (error) {
+                console.error('Error fetching bus data:', error);
+                document.getElementById('loading').textContent = 'Connection error - retrying...';
+            }
+        }
+
+        function addBusMarker(bus) {
+            const position = { lat: bus.lat, lng: bus.lon };
+            
+            // Calculate time left
+            const now = new Date();
+            const broadcastUntil = new Date(bus.broadcastUntil);
+            const timeLeft = Math.max(0, broadcastUntil.getTime() - now.getTime());
+            const minutesLeft = Math.ceil(timeLeft / (1000 * 60));
+            
+            // Direction text
+            const getDirectionText = (heading) => {
+                if (heading >= 315 || heading < 45) return 'N';
+                if (heading >= 45 && heading < 135) return 'E';
+                if (heading >= 135 && heading < 225) return 'S';
+                return 'W';
+            };
+
+            // Create custom marker
+            const marker = new google.maps.Marker({
+                position: position,
+                map: map,
+                title: \`Bus \${bus.id}\`,
+                icon: {
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(\`
+                        <svg width="36" height="36" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="18" cy="18" r="16" fill="#4A90E2" stroke="white" stroke-width="2"/>
+                            <text x="18" y="22" text-anchor="middle" fill="white" font-family="Arial" font-size="10" font-weight="bold">\${bus.id}</text>
+                        </svg>
+                    \`),
+                    scaledSize: new google.maps.Size(36, 36),
+                    anchor: new google.maps.Point(18, 18)
+                }
+            });
+
+            // Add info window
+            const infoWindow = new google.maps.InfoWindow({
+                content: \`
+                    <div style="padding: 8px;">
+                        <strong>Bus \${bus.id}</strong><br>
+                        Route: \${bus.routeTag}<br>
+                        Direction: \${getDirectionText(bus.heading)}<br>
+                        Speed: \${bus.speedKmHr} km/h<br>
+                        Time left: \${minutesLeft} min
+                    </div>
+                \`
+            });
+
+            marker.addListener('click', () => {
+                infoWindow.open(map, marker);
+            });
+
+            markers.push(marker);
+        }
+
+        function clearMarkers() {
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+        }
+    </script>
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCugWNKu6G8qLCDZIb_J8DWTn7FzzX6Tcs&callback=initMap">
+    </script>
+</body>
+</html>`;
+  
+  res.send(webHtml);
+});
+
 // API endpoint for your app
 app.get('/current-buses', (req, res) => {
   console.log('📱 App requested current buses');
