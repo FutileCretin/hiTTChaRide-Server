@@ -415,15 +415,12 @@ app.get('/', (req, res) => {
                 }
             });
 
-            // Add info window
+            // Add info window - match mobile app format exactly
             const infoWindow = new google.maps.InfoWindow({
                 content: \`
                     <div style="padding: 8px;">
                         <strong>Bus \${bus.id}</strong><br>
-                        Route: \${bus.routeTag}<br>
-                        Direction: \${getDirectionText(bus.heading)}<br>
-                        Speed: \${bus.speedKmHr} km/h<br>
-                        Time left: \${minutesLeft} min
+                        \${getDirectionText(bus.heading)} • \${minutesLeft} min left
                     </div>
                 \`
             });
